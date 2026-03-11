@@ -223,3 +223,17 @@ test('TC_PRODUCT_04 - Delete Product - confirm modal, validate toast and verify 
 
   console.log(`✅ DELETE — "${UPDATED_NAME}" confirmed removed. Search returns no results.`);
 });
+PRODUCTS_URL}`);
+  await productsPage.waitForProductsToLoad();
+
+  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInput.fill(UPDATED_NAME);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1000);
+
+  const isStillVisible = await productsPage.isProductVisible(UPDATED_NAME);
+  expect(isStillVisible, `"${UPDATED_NAME}" should NOT appear after deletion`).toBeFalsy();
+
+  console.log(`✅ DELETE — "${UPDATED_NAME}" removed. Search returns no results.`);
+});

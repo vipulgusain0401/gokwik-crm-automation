@@ -1,30 +1,25 @@
 import { test, expect, BrowserContext, Page } from '@playwright/test';
-import { LoginPage } from '../pages/login.page';
-import { DashboardPage } from '../pages/dashboard.page';
 import { ENV } from '../config/env.config';
 
 // =============================================================================
 // SCRIPT 3 — ADDITIONAL / BONUS SCENARIOS
-// Login ONCE — session shared
-// TC_ADD_01 : Pagination — change page size (5/20/50), navigate next page
-// TC_ADD_02 : Negative — submit with empty SKU → validate error message
+// Session loaded from auth/session.json — no login needed
+// TC_ADD_01 : Pagination — change page size 5/20/50, navigate next page
+// TC_ADD_02 : Negative — submit with empty SKU, validate error message
 // =============================================================================
 
 let context: BrowserContext;
 let page: Page;
 
 test.beforeAll(async ({ browser }) => {
-  context = await browser.newContext();
+  // Load saved session — no login required
+  context = await browser.newContext({ storageState: 'auth/session.json' });
   page    = await context.newPage();
 
-  const loginPage     = new LoginPage(page);
-  const dashboardPage = new DashboardPage(page);
-
-  console.log('\n🔐 Logging in for additional scenarios...');
-  await loginPage.login();
-  await loginPage.verifyLoginSuccess();
-  await dashboardPage.switchMerchant();
-  console.log('✅ Setup complete\n');
+  console.log('\n✅ Session loaded — navigating to products');
+  await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForLoadState('networkidle').catch(() => {});
 });
 
 test.afterAll(async () => {
@@ -42,10 +37,8 @@ async function goToProducts() {
 // ── TC_ADD_01: PAGINATION ─────────────────────────────────────────────────────
 test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page', async () => {
   await goToProducts();
-
   console.log('\n📄 Testing Pagination...');
 
-  // Show total count
   const totalText = await page.locator('text=/Total.*Items/i').textContent().catch(() => '');
   console.log(`  ${totalText?.trim()}`);
 
@@ -59,7 +52,7 @@ test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page',
   await page.waitForTimeout(1000);
   const countAt5 = await page.locator('.ant-table-tbody .ant-table-row').count();
   expect(countAt5).toBeLessThanOrEqual(5);
-  console.log(`  ✅ Page size 5  — ${countAt5} rows shown`);
+  console.log(`  ✅ Page size 5  — ${countAt5} rows`);
 
   // ── Page size: 20 ─────────────────────────────────────────────────────────
   await pageSizeDropdown.click();
@@ -70,7 +63,7 @@ test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page',
   const countAt20 = await page.locator('.ant-table-tbody .ant-table-row').count();
   expect(countAt20).toBeLessThanOrEqual(20);
   expect(countAt20).toBeGreaterThan(countAt5);
-  console.log(`  ✅ Page size 20 — ${countAt20} rows shown`);
+  console.log(`  ✅ Page size 20 — ${countAt20} rows`);
 
   // ── Page size: 50 ─────────────────────────────────────────────────────────
   await pageSizeDropdown.click();
@@ -81,7 +74,7 @@ test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page',
   const countAt50 = await page.locator('.ant-table-tbody .ant-table-row').count();
   expect(countAt50).toBeLessThanOrEqual(50);
   expect(countAt50).toBeGreaterThan(countAt20);
-  console.log(`  ✅ Page size 50 — ${countAt50} rows shown`);
+  console.log(`  ✅ Page size 50 — ${countAt50} rows`);
 
   // ── Next page ─────────────────────────────────────────────────────────────
   const nextBtn = page.locator('button:has-text("Next")');
@@ -94,9 +87,8 @@ test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page',
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(2000);
 
-    const countPage2 = await page.locator('.ant-table-tbody .ant-table-row').count();
+    const countPage2    = await page.locator('.ant-table-tbody .ant-table-row').count();
     const firstRowPage2 = await page.locator('.ant-table-tbody .ant-table-row').first().textContent();
-
     expect(countPage2).toBeGreaterThan(0);
     expect(firstRowPage2).not.toBe(firstRowPage1);
     console.log(`  ✅ Next page — ${countPage2} rows, different products shown`);
@@ -108,49 +100,46 @@ test('TC_ADD_01 - Pagination - change page size 5/20/50 and navigate next page',
   console.log(`\n✅ PAGINATION — Page size (5/20/50) and next page navigation verified`);
 });
 
-// ── TC_ADD_02: NEGATIVE — EMPTY SKU VALIDATION ───────────────────────────────
+// ── TC_ADD_02: NEGATIVE — EMPTY SKU ──────────────────────────────────────────
 test('TC_ADD_02 - Negative - submit product with empty SKU should show validation error', async () => {
   await goToProducts();
   console.log('\n⚠️  Testing empty SKU validation...');
 
-  // Open create form
   await page.locator('[data-test-id="products_add_button"]').click();
   await page.locator('[data-test-id="title_input"]').waitFor({ state: 'visible', timeout: 10000 });
 
-  // Fill title and description — intentionally leave SKU empty
+  // Fill title, leave SKU empty
   await page.locator('[data-test-id="title_input"]').fill('NegativeTestProduct');
   await page.locator('.ql-editor').first().fill('Test description');
   await page.locator('[data-test-id="shipping_card_header"]').click();
   await page.locator('[data-test-id="shipping_card_physical_product_checkbox"]').uncheck();
 
-  // Make sure SKU is empty
   const skuInput = page.locator('[data-test-id="inventory_card_sku_input"]');
   await skuInput.waitFor({ state: 'visible', timeout: 10000 });
   await skuInput.clear();
 
-  console.log('  Submitting form with empty SKU...');
+  console.log('  Submitting with empty SKU...');
   await page.locator('[data-test-id="create_product_submit_button"]').click();
   await page.waitForTimeout(1500);
 
-  // ── Validate: "SKU is required" error message appears ────────────────────
+  // Validate error message appears
   const skuError = page.getByText('SKU is required');
   await skuError.waitFor({ state: 'visible', timeout: 8000 });
   await expect(skuError).toBeVisible();
-  console.log('  ✅ "SKU is required" error message displayed correctly');
+  console.log('  ✅ "SKU is required" error displayed');
 
-  // ── Validate: form does NOT submit — still on create page ─────────────────
-  const submitBtn = page.locator('[data-test-id="create_product_submit_button"]');
-  await expect(submitBtn).toBeVisible();
-  console.log('  ✅ Form not submitted — still on create page as expected');
+  // Validate form not submitted — still on create page
+  await expect(page.locator('[data-test-id="create_product_submit_button"]')).toBeVisible();
+  console.log('  ✅ Form not submitted — still on create page');
 
-  // ── Validate: error goes away once SKU is filled ──────────────────────────
+  // Validate error clears once SKU filled
   await skuInput.fill('NEG_SKU_VALID_001');
   await page.waitForTimeout(800);
   const errorGone = await skuError.isVisible().catch(() => false);
   expect(errorGone).toBeFalsy();
   console.log('  ✅ Error clears once SKU is filled');
 
-  // Navigate away without saving — no cleanup needed
+  // Navigate away without saving
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
-  console.log('\n✅ NEGATIVE — Empty SKU validation error verified correctly');
+  console.log('\n✅ NEGATIVE — Empty SKU validation verified correctly');
 });
