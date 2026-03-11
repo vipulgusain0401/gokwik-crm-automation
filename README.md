@@ -6,9 +6,12 @@ Playwright + TypeScript automation framework for the GoKwik CRM Admin Panel — 
 
 ## Tech Stack
 
-- **Playwright** — browser automation
-- **TypeScript** — type-safe test code
-- **Page Object Model (POM)** — maintainable, scalable structure
+| Tool | Purpose |
+|------|---------|
+| Playwright | Browser automation |
+| TypeScript | Type-safe test code |
+| Page Object Model | Maintainable, scalable structure |
+| GitHub Actions | CI pipeline |
 
 ---
 
@@ -17,66 +20,58 @@ Playwright + TypeScript automation framework for the GoKwik CRM Admin Panel — 
 ```
 gokwik-crm-automation/
 ├── config/
-│   └── env.config.ts          # Base URL, login credentials, merchant ID
+│   └── env.config.ts          # Base URL, credentials, merchant ID
 ├── pages/
-│   ├── base.page.ts           # Base POM — shared navigation and wait utilities
-│   ├── login.page.ts          # Login flow (email → password → OTP)
+│   ├── base.page.ts           # Base POM — shared utils, auto chat-popup dismissal
+│   ├── login.page.ts          # 3-step login (email → password → OTP)
 │   ├── dashboard.page.ts      # Merchant switching
 │   └── products.page.ts       # Products CRUD operations
 ├── tests/
-│   ├── login.spec.ts          # Script 1 — Login flow (3 test cases)
-│   ├── products.spec.ts       # Script 2 — Product CRUD (4 test cases)
-│   └── additional.spec.ts     # Script 3 — Filter, Pagination, Negative (3 test cases)
+│   ├── login.spec.ts          # Script 1 — Login flow (3 tests)
+│   ├── products.spec.ts       # Script 2 — Product CRUD E2E (4 tests)
+│   └── additional.spec.ts     # Script 3 — Pagination + Negative (2 tests)
 ├── test-data/
 │   └── products.data.ts       # Test data helpers
 ├── utils/
 │   ├── logger.ts              # Structured step-by-step logging
-│   └── wait-helper.ts         # Smart wait strategies (no hard waits)
+│   ├── wait-helper.ts         # Smart wait strategies (no hard waits)
+│   └── dismiss-chat.ts        # AI chat popup dismissal utility
 ├── .github/workflows/
 │   └── playwright.yml         # GitHub Actions CI pipeline
-└── playwright.config.ts       # Playwright config — headed, screenshots, video, HTML report
+└── playwright.config.ts       # Playwright config
 ```
 
 ---
 
 ## Setup & Run
 
-### 1. Clone the repo
+### 1. Clone and install
 ```bash
 git clone https://github.com/vipulgusain0401/gokwik-crm-automation.git
 cd gokwik-crm-automation
-```
-
-### 2. Install dependencies
-```bash
 npm install
 npx playwright install chromium
 ```
 
-### 3. Run all tests
-```bash
-npm test
-```
-
-### 4. Run with browser visible
+### 2. Run all tests
 ```bash
 npx playwright test --headed
 ```
 
-### 5. Run a specific script
+### 3. Run individual scripts
 ```bash
 npx playwright test tests/login.spec.ts --headed
 npx playwright test tests/products.spec.ts --headed
 npx playwright test tests/additional.spec.ts --headed
 ```
 
-### 6. Run products CRUD with custom product name and SKU
+### 4. Run with custom product name and SKU
 ```bash
 PRODUCT_NAME="MyProduct" PRODUCT_SKU="MySKU001" npx playwright test tests/products.spec.ts --headed
 ```
-> If not provided, defaults to `TestProduct_1` / `TestSKUId_1`
+> Defaults to `TestProduct_1` / `TestSKUId_1` if not provided
 
-### 7. View HTML report after run
+### 5. View HTML report
 ```bash
 npx playwright show-report
 ```
@@ -85,57 +80,77 @@ npx playwright show-report
 
 ## Test Cases
 
-### Script 1 — Login Flow (`login.spec.ts`)
+### Script 1 — Login (`login.spec.ts`)
 
-| ID | Test | Type |
-|----|------|------|
+| ID | Description | Type |
+|----|-------------|------|
 | TC_LOGIN_01 | Valid email + password + OTP → redirects to dashboard | Positive |
-| TC_LOGIN_02 | New/unregistered email → triggers signup flow | Negative |
+| TC_LOGIN_02 | Unregistered email → signup flow triggered | Negative |
 | TC_LOGIN_03 | Valid email + wrong password → login blocked | Negative |
 
 ### Script 2 — Product CRUD (`products.spec.ts`)
-> Login and merchant switch happen **once** — session is shared across all 4 tests
+> Single login in `beforeAll` — all 4 tests share one session (E2E flow)
 
-| ID | Test | Type |
-|----|------|------|
-| TC_PRODUCT_01 | Create product with title + SKU → verify in listing | Create |
-| TC_PRODUCT_02 | Search product by name → verify on detail page | Read |
-| TC_PRODUCT_03 | Clear SKU → validate error → update SKU → verify saved | Update |
-| TC_PRODUCT_04 | Select product → delete → confirm modal → verify removed | Delete |
+| ID | Description | Type |
+|----|-------------|------|
+| TC_PRODUCT_01 | Create product with title + SKU → verify in listing + Active status | Create |
+| TC_PRODUCT_02 | Search by name → verify name, status, variant count | Read |
+| TC_PRODUCT_03 | Update product name → verify updated in listing, old name gone | Update |
+| TC_PRODUCT_04 | Delete product → confirm modal → toast → search returns no results | Delete |
 
-### Script 3 — Additional Scenarios (`additional.spec.ts`)
-> Login and merchant switch happen **once** — session is shared across all 3 tests
+### Script 3 — Additional (`additional.spec.ts`)
+> Single login in `beforeAll` — session shared across both tests
 
-| ID | Test | Type |
-|----|------|------|
-| TC_ADD_01 | All / Active / Draft / Archived filter tabs → verify row counts | Filter |
-| TC_ADD_02 | Change page size (5 / 20 / 50) → navigate Next → Prev | Pagination |
-| TC_ADD_03 | Submit without title → submit without SKU → fill all → submit | Negative |
+| ID | Description | Type |
+|----|-------------|------|
+| TC_ADD_01 | Change page size 5/20/50 → verify row counts → navigate next page | Pagination |
+| TC_ADD_02 | Submit with empty SKU → validate error → fill SKU → error clears | Negative |
 
 ---
 
-## Framework Design Decisions
+## Framework Checklist
 
+### Mandatory ✅
 | Feature | Implementation |
 |---------|---------------|
 | Page Object Model | Each page has its own class — no selectors in test files |
-| Single login per script | `beforeAll` logs in once, all tests share the browser session |
-| No hard waits | Uses `waitFor`, `networkidle`, and smart polling throughout |
-| data-test-id locators | Uses stable `data-test-id` attributes from the app — not brittle CSS |
-| Screenshots + Video | Captured for every test run, saved to `test-results/` |
-| HTML Report | Auto-opens after every run with full step-by-step trace |
-| Retry on flakiness | 1 retry locally, 2 retries in CI |
-| Custom test data | Pass via env vars: `PRODUCT_NAME` and `PRODUCT_SKU` |
-| CI Pipeline | GitHub Actions runs on every push to main |
+| Reusable utilities | `logger.ts`, `wait-helper.ts`, `dismiss-chat.ts` |
+| Environment config | `config/env.config.ts` — URL, credentials, merchant ID |
+| Folder structure | `pages / tests / utils / config / test-data` |
+| Readable test naming | `TC_LOGIN_01`, `TC_PRODUCT_01` etc. with descriptive titles |
+| Meaningful assertions | Every `expect()` has a failure message |
+
+### Good to Have ✅
+| Feature | Implementation |
+|---------|---------------|
+| Test data separation | `test-data/products.data.ts` + env vars (`PRODUCT_NAME`, `PRODUCT_SKU`) |
+| Logging | Step-by-step structured logging via `utils/logger.ts` |
+| Retry mechanism | `retries: 1` locally, `2` in CI |
+| Screenshot on failure | `screenshot: 'on'` — saved to `test-results/` |
+| HTML reporting | Auto-opens after every run |
+| CI pipeline | GitHub Actions — `.github/workflows/playwright.yml` |
 
 ---
 
-## Environment Details (QA)
+## Design Decisions
+
+**Single login per script** — `beforeAll` logs in once, all tests in the script share the browser session. No repeated logins within a script.
+
+**Sequential execution** — `workers: 1` — all scripts share the same QA account and merchant. Parallel execution would require separate credentials per script.
+
+**data-test-id locators** — uses stable `data-test-id` attributes throughout. No brittle XPaths or CSS class selectors.
+
+**Chat popup handling** — the app has an AI chat widget that appears intermittently on post-login pages. `BasePage` registers a `page.on('load')` listener that automatically dismisses it on every navigation, preventing it from intercepting keyboard input.
+
+**Update tests name, not SKU** — SKU is only visible on the product detail page. Product name appears in the listing table, making it the right field to verify update end-to-end.
+
+---
+
+## Environment (QA)
 
 | Config | Value |
 |--------|-------|
 | Dashboard URL | https://qa-mdashboard.dev.gokwik.in |
-| Login Email | sandboxuser1@gokwik.co |
-| OTP | 123456 (hardcoded) |
+| Login email | sandboxuser1@gokwik.co |
+| OTP | 123456 |
 | Merchant ID | 19h577u3p4be |
-
