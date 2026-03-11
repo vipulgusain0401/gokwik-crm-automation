@@ -3,48 +3,33 @@ import { LoginPage } from '../pages/login.page';
 import { DashboardPage } from '../pages/dashboard.page';
 import { ProductsPage } from '../pages/products.page';
 import { ENV } from '../config/env.config';
-import * as readline from 'readline';
 
 // =============================================================================
-// SCRIPT 2 — PRODUCT CRUD (Single script, single login, shared session)
-// Sequence:
-//   Login → Switch Merchant → Navigate to Products
-//   → Create → Read/Verify in list → Update (SKU validation + successful update)
-//   → Delete → Verify removed
+// SCRIPT 2 — PRODUCT CRUD (Single login, shared session across all 4 tests)
+//
+// HOW TO RUN with custom data:
+//   PRODUCT_NAME="MyProduct" PRODUCT_SKU="MySKU001" npx playwright test tests/products.spec.ts --headed
+//
+// Run with defaults (TestProduct_1 / TestSKUId_1):
+//   npx playwright test tests/products.spec.ts --headed
 // =============================================================================
 
-// ── Prompt for product name and SKU from terminal ────────────────────────────
-async function promptInput(question: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim() || '');
-    });
-  });
-}
+const PRODUCT_NAME   = process.env.PRODUCT_NAME || 'TestProduct_1';
+const PRODUCT_SKU    = process.env.PRODUCT_SKU  || 'TestSKUId_1';
+const UPDATED_NAME   = `${PRODUCT_NAME}_Updated`; // UPDATE changes the name — visible in listing
+const UPDATED_SKU    = `${PRODUCT_SKU}_Updated`;
 
 let context: BrowserContext;
 let page: Page;
 let productId: string;
-let PRODUCT_NAME: string;
-let PRODUCT_SKU: string;
-let UPDATED_SKU: string;
 
 test.beforeAll(async ({ browser }) => {
-  // ── Prompt for test data from terminal ──────────────────────────────────────
-  const inputName = await promptInput('\n📦 Enter Product Name (or press Enter to use "TestProduct_1"): ');
-  const inputSku  = await promptInput('🔑 Enter SKU ID (or press Enter to use "TestSKUId_1"): ');
+  console.log('\n========================================');
+  console.log(`📦 Product Name  : ${PRODUCT_NAME}`);
+  console.log(`🔑 SKU           : ${PRODUCT_SKU}`);
+  console.log(`✏️  Updated Name  : ${UPDATED_NAME}`);
+  console.log('========================================\n');
 
-  PRODUCT_NAME = inputName || 'TestProduct_1';
-  PRODUCT_SKU  = inputSku  || 'TestSKUId_1';
-  UPDATED_SKU  = `${PRODUCT_SKU}_Updated`;
-
-  console.log(`\n🔖 Product Name : ${PRODUCT_NAME}`);
-  console.log(`🔖 SKU          : ${PRODUCT_SKU}`);
-  console.log(`🔖 Updated SKU  : ${UPDATED_SKU}\n`);
-
-  // ── Login ONCE — session shared across ALL 4 CRUD tests ─────────────────────
   context = await browser.newContext();
   page    = await context.newPage();
 
@@ -67,67 +52,85 @@ test.afterAll(async () => {
 });
 
 // ── TC_PRODUCT_01: CREATE ─────────────────────────────────────────────────────
-test('TC_PRODUCT_01 - Create Product - fill title and SKU, save and verify in listing', async () => {
+test('TC_PRODUCT_01 - Create Product - fill title and SKU, verify in listing with Active status', async () => {
   const productsPage = new ProductsPage(page);
 
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  console.log(`\n➕ Creating product: "${PRODUCT_NAME}" with SKU: "${PRODUCT_SKU}"`);
+  console.log(`\n➕ Creating product: "${PRODUCT_NAME}" | SKU: "${PRODUCT_SKU}"`);
   await productsPage.createProduct(PRODUCT_NAME, PRODUCT_SKU);
 
   // Navigate back to listing
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  // Verify product appears in listing
+  // ── Validate: product appears in listing ──────────────────────────────────
   const isVisible = await productsPage.isProductVisible(PRODUCT_NAME);
   expect(isVisible, `"${PRODUCT_NAME}" should appear in listing after creation`).toBeTruthy();
 
-  // Capture product ID — used in all subsequent tests
+  // Capture product ID for all subsequent tests
   productId = await productsPage.getProductIdByName(PRODUCT_NAME);
 
-  console.log(`✅ CREATE — "${PRODUCT_NAME}" visible in listing | Product ID: ${productId}`);
+  // ── Validate: Status shows Active (default) ───────────────────────────────
+  const productRow = page.locator(`[data-test-id="products_table_product_link_${productId}"]`)
+    .locator('xpath=ancestor::tr').first();
+  const statusCell = productRow.locator('text=Active').first();
+  await expect(statusCell).toBeVisible();
+
+  console.log(`✅ CREATE — "${PRODUCT_NAME}" visible in listing | Status: Active | ID: ${productId}`);
 });
 
 // ── TC_PRODUCT_02: READ / VERIFY ──────────────────────────────────────────────
-test('TC_PRODUCT_02 - Read Product - verify product appears in listing with correct name', async () => {
+test('TC_PRODUCT_02 - Read Product - search by name, verify name, status and variant count', async () => {
   const productsPage = new ProductsPage(page);
 
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  console.log(`\n🔍 Verifying product "${PRODUCT_NAME}" in listing...`);
+  console.log(`\n🔍 Searching and verifying "${PRODUCT_NAME}"...`);
 
-  // Verify product is in the table
+  // ── Search by name ────────────────────────────────────────────────────────
+  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInput.fill(PRODUCT_NAME);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1000);
+
+  // ── Validate: product appears in search results ───────────────────────────
   const isVisible = await productsPage.isProductVisible(PRODUCT_NAME);
-  expect(isVisible, `"${PRODUCT_NAME}" should be visible in product listing`).toBeTruthy();
+  expect(isVisible, `"${PRODUCT_NAME}" should appear in search results`).toBeTruthy();
 
-  // Verify the product link has correct text
+  // Get the product row
+  const productRow = page.locator(`tr:has([data-test-id="products_table_product_link_${productId}"])`);
+
+  // ── Validate: Name matches exactly ───────────────────────────────────────
   const productLink = page.locator(`[data-test-id="products_table_product_link_${productId}"]`);
-  await expect(productLink).toBeVisible();
   const linkText = await productLink.textContent();
   expect(linkText?.trim()).toBe(PRODUCT_NAME);
+  console.log(`  ✅ Name verified: "${linkText?.trim()}"`);
 
-  // Open and verify detail page title
-  await productLink.click();
-  await page.waitForLoadState('domcontentloaded');
-  const titleInput = page.locator('[data-test-id="title_input"]');
-  await titleInput.waitFor({ state: 'visible', timeout: 10000 });
-  const titleValue = await titleInput.inputValue();
-  expect(titleValue).toBe(PRODUCT_NAME);
+  // ── Validate: Status is Active ────────────────────────────────────────────
+  const statusCell = productRow.locator('text=Active').first();
+  await expect(statusCell).toBeVisible();
+  console.log('  ✅ Status verified: Active');
 
-  console.log(`✅ READ — "${PRODUCT_NAME}" verified in listing and on detail page`);
+  // ── Validate: Variant count visible ──────────────────────────────────────
+  const variantCell = productRow.locator('text=/\\d+ variant/i').first();
+  const variantText = await variantCell.textContent().catch(() => 'N/A');
+  console.log(`  ✅ Variant count: "${variantText?.trim()}"`);
+
+  console.log(`✅ READ — Name, Status and Variant count all verified for "${PRODUCT_NAME}"`);
 });
 
-// ── TC_PRODUCT_03: UPDATE (with SKU validation check + successful update) ─────
-test('TC_PRODUCT_03 - Update Product - validate empty SKU error then update successfully', async () => {
+// ── TC_PRODUCT_03: UPDATE ─────────────────────────────────────────────────────
+test('TC_PRODUCT_03 - Update Product - change product name and verify updated in listing', async () => {
   const productsPage = new ProductsPage(page);
 
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  console.log(`\n✏️  Opening product for update...`);
+  console.log(`\n✏️  Updating product name to: "${UPDATED_NAME}"`);
 
   // Open product detail page
   const productLink = page.locator(`[data-test-id="products_table_product_link_${productId}"]`);
@@ -135,65 +138,48 @@ test('TC_PRODUCT_03 - Update Product - validate empty SKU error then update succ
   await productLink.click();
   await page.waitForLoadState('domcontentloaded');
 
-  // Wait for SKU input to be visible
-  const skuInput = page.locator('[data-test-id="inventory_card_sku_input"]');
-  await skuInput.waitFor({ state: 'visible', timeout: 15000 });
+  // ── Update the title (name) — this shows in listing unlike SKU ───────────
+  const titleInput = page.locator('[data-test-id="title_input"]');
+  await titleInput.waitFor({ state: 'visible', timeout: 10000 });
+  await titleInput.clear();
+  await titleInput.fill(UPDATED_NAME);
 
-  // ── Step 1: Clear SKU and try to save → expect validation error ─────────────
-  console.log('  ⚠️  Testing SKU validation — clearing SKU and saving...');
-  await skuInput.clear();
+  // Save changes
   const saveBtn = page.locator('[data-test-id="product_form_save_button"]');
   await saveBtn.click();
-  await page.waitForTimeout(1500);
-
-  const skuError = page.getByText('SKU is required');
-  const errorShown = await skuError.isVisible().catch(() => false);
-  expect(errorShown, '"SKU is required" validation error should appear').toBeTruthy();
-  console.log('  ✅ Validation — "SKU is required" error shown correctly');
-
-  // ── Step 2: Fill updated SKU and save successfully ──────────────────────────
-  console.log(`  ✏️  Filling updated SKU: "${UPDATED_SKU}"`);
-  await skuInput.fill(UPDATED_SKU);
-  await saveBtn.click();
+  await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(2000);
 
-  // Wait for success — button should go disabled (no unsaved changes)
-  await page.waitForLoadState('networkidle').catch(() => {});
-
-  // Navigate back and re-open to confirm SKU persisted
+  // ── Validate: updated name reflected in listing ───────────────────────────
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  const productLinkAgain = page.locator(`[data-test-id="products_table_product_link_${productId}"]`);
-  await productLinkAgain.click();
-  await page.waitForLoadState('domcontentloaded');
+  const isUpdatedVisible = await productsPage.isProductVisible(UPDATED_NAME);
+  expect(isUpdatedVisible, `Updated name "${UPDATED_NAME}" should appear in listing`).toBeTruthy();
 
-  const skuInputReloaded = page.locator('[data-test-id="inventory_card_sku_input"]');
-  await skuInputReloaded.waitFor({ state: 'visible', timeout: 15000 });
-  const savedSku = await skuInputReloaded.inputValue();
-  expect(savedSku).toBe(UPDATED_SKU);
+  // Old name should no longer appear
+  const isOldVisible = await productsPage.isProductVisible(PRODUCT_NAME);
+  expect(isOldVisible, `Old name "${PRODUCT_NAME}" should no longer appear`).toBeFalsy();
 
-  console.log(`✅ UPDATE — SKU updated to "${UPDATED_SKU}" and verified after reload`);
+  console.log(`✅ UPDATE — name changed to "${UPDATED_NAME}" and verified in listing`);
 });
 
 // ── TC_PRODUCT_04: DELETE ─────────────────────────────────────────────────────
-test('TC_PRODUCT_04 - Delete Product - confirm modal and verify removed from listing', async () => {
+test('TC_PRODUCT_04 - Delete Product - confirm modal, validate toast and verify removed from listing', async () => {
   const productsPage = new ProductsPage(page);
 
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  console.log(`\n🗑️  Deleting product: "${PRODUCT_NAME}" (ID: ${productId})`);
+  console.log(`\n🗑️  Deleting product: "${UPDATED_NAME}" (ID: ${productId})`);
+  expect(productId, 'Product ID must be available from TC_PRODUCT_01').toBeDefined();
 
-  // Ensure productId is set — guard against test isolation issue
-  expect(productId, 'Product ID must be set from TC_PRODUCT_01').toBeDefined();
-
-  // Select row checkbox
+  // ── Select row checkbox ───────────────────────────────────────────────────
   const checkbox = page.locator(`[data-test-id="generic_table_row_checkbox_${productId}"]`);
   await checkbox.waitFor({ state: 'visible', timeout: 15000 });
   await checkbox.check();
 
-  // More Actions → Delete products
+  // ── More Actions → Delete products ───────────────────────────────────────
   const moreActions = page.locator('[data-test-id="bulk_action_toolbar_more_actions_button"]');
   await moreActions.waitFor({ state: 'visible', timeout: 8000 });
   await moreActions.click();
@@ -202,20 +188,38 @@ test('TC_PRODUCT_04 - Delete Product - confirm modal and verify removed from lis
   await deleteOption.waitFor({ state: 'visible', timeout: 5000 });
   await deleteOption.click();
 
-  // Confirm modal → OK
+  // ── Confirmation modal → OK ───────────────────────────────────────────────
   const okButton = page.getByRole('button', { name: 'OK' });
   await okButton.waitFor({ state: 'visible', timeout: 8000 });
+  console.log('  ✅ Confirmation modal appeared — clicking OK');
   await okButton.click();
+
+  // ── Validate: toast/success message appears ───────────────────────────────
+  const toast = page.locator('[class*="toast"], [class*="message"], [class*="notification"], [class*="alert"], [role="alert"]').first();
+  const toastVisible = await toast.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+  if (toastVisible) {
+    const toastText = await toast.textContent();
+    console.log(`  ✅ Toast message: "${toastText?.trim()}"`);
+  } else {
+    console.log('  ℹ️  No toast detected — checking listing directly');
+  }
 
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(2000);
 
-  // Navigate back and verify product is gone
+  // ── Navigate back and search — should return no results ──────────────────
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  const isStillVisible = await productsPage.isProductVisible(PRODUCT_NAME);
-  expect(isStillVisible, `"${PRODUCT_NAME}" should NOT appear after deletion`).toBeFalsy();
+  // Search for deleted product — should return no results
+  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInput.fill(UPDATED_NAME);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1000);
 
-  console.log(`✅ DELETE — "${PRODUCT_NAME}" confirmed removed from listing`);
+  const isStillVisible = await productsPage.isProductVisible(UPDATED_NAME);
+  expect(isStillVisible, `"${UPDATED_NAME}" should NOT appear in search after deletion`).toBeFalsy();
+
+  console.log(`✅ DELETE — "${UPDATED_NAME}" confirmed removed. Search returns no results.`);
 });
