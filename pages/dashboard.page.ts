@@ -11,73 +11,48 @@ export class DashboardPage extends BasePage {
   async switchMerchant(merchantId = ENV.MERCHANT_ID): Promise<void> {
     this.logger.step(`Switching to merchant: ${merchantId}`);
 
-    // From recording the button is in top-right header area
-    // It contains an image/icon + merchant name + down arrow
-    // Selector: find button inside the breadcrumb/top header that has "down" icon
-    const merchantDropdown = this.page.locator(
-      '[class*="Switch"], [class*="switch-merchant"], button[class*="shadow"]'
-    ).first();
+    // Dismiss chat before any interaction — inherited from BasePage
+    await this.dismissChatPopup();
 
-    // Fallback to the exact structure seen in page snapshot:
-    // button "Weryzee QA down" inside generic ref=e256 (breadcrumb area)
-    const fallbackDropdown = this.page.locator(
-      'button:has(.anticon-down), button:has([aria-label="down"])'
-    ).last();
+    const merchantDropdown = this.page.locator('button:has(.anticon-down)').last();
 
     let clicked = false;
-
-    // Try primary
     try {
-      await merchantDropdown.waitFor({ state: 'visible', timeout: 5000 });
+      await merchantDropdown.waitFor({ state: 'visible', timeout: 8000 });
       await merchantDropdown.click();
       clicked = true;
-      this.logger.info('Clicked merchant dropdown (primary)');
+      this.logger.info('Merchant dropdown opened');
     } catch {
-      this.logger.warn('Primary selector failed — trying fallback');
+      this.logger.warn('Dropdown click failed — navigating directly to products URL');
     }
 
-    // Try fallback
     if (!clicked) {
-      try {
-        await fallbackDropdown.waitFor({ state: 'visible', timeout: 5000 });
-        await fallbackDropdown.click();
-        clicked = true;
-        this.logger.info('Clicked merchant dropdown (fallback)');
-      } catch {
-        this.logger.warn('Fallback failed — navigating directly to products URL');
-      }
-    }
-
-    // If both selectors fail — navigate directly (most reliable)
-    if (!clicked) {
-      this.logger.info('Skipping merchant switch UI — navigating directly to merchant products URL');
       await this.page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
       await WaitHelper.waitForNetworkIdle(this.page);
       return;
     }
 
     await this.page.waitForTimeout(800);
+    await this.dismissChatPopup(); // Can reappear after dropdown click
 
-    // Search for merchant ID
     const searchInput = this.page.getByRole('textbox').first();
     await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+    await searchInput.click();
+    await this.page.waitForTimeout(300);
     await searchInput.fill(merchantId);
     await this.page.waitForTimeout(800);
 
-    // Select radio
-    const merchantRadio = this.page.getByRole('radio', { name: new RegExp(merchantId) });
-    await merchantRadio.waitFor({ state: 'visible', timeout: 8000 });
-    await merchantRadio.check();
+    // Click label wrapping radio — exact selector from page inspection
+    const merchantLabel = this.page.locator(`label.ant-radio-wrapper:has(input[value="${merchantId}"])`);
+    await merchantLabel.waitFor({ state: 'visible', timeout: 8000 });
+    await merchantLabel.click();
 
-    // Confirm
     await this.page.getByRole('button', { name: 'Set Merchant' }).click();
     await WaitHelper.waitForNetworkIdle(this.page);
     await this.page.waitForTimeout(1000);
 
-    // Handle "click here" redirect
     const clickHere = this.page.getByText('click here');
-    const clickHereVisible = await clickHere.isVisible().catch(() => false);
-    if (clickHereVisible) {
+    if (await clickHere.isVisible().catch(() => false)) {
       await clickHere.click();
       await WaitHelper.waitForNetworkIdle(this.page);
     }
@@ -90,6 +65,5 @@ export class DashboardPage extends BasePage {
     await this.page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
     await this.page.waitForLoadState('domcontentloaded');
     await WaitHelper.waitForNetworkIdle(this.page);
-    this.logger.info(`Products page loaded: ${this.page.url()}`);
   }
 }

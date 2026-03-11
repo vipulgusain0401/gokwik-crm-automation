@@ -9,11 +9,35 @@ export class BasePage {
   constructor(page: Page, pageName: string) {
     this.page = page;
     this.logger = new Logger(pageName);
+
+    // Automatically dismiss chat popup on every navigation
+    // Chat widget appears intermittently on all post-login pages
+    this.page.on('load', () => {
+      this.dismissChatPopup().catch(() => {});
+    });
+  }
+
+  // Dismiss AI chat popup if visible
+  // Called automatically on every page load + can be called manually before any input
+  async dismissChatPopup(): Promise<void> {
+    try {
+      const chatHeader = this.page.locator('.chat-header');
+      const isVisible  = await chatHeader.isVisible();
+      if (isVisible) {
+        this.logger.warn('Chat popup detected — closing');
+        await this.page.locator('.chat-header .chat-header-button').last().click();
+        await this.page.waitForTimeout(300);
+        this.logger.info('Chat popup closed');
+      }
+    } catch {
+      // Not present or already closed — continue
+    }
   }
 
   async navigateTo(url: string): Promise<void> {
     this.logger.step(`Navigating to: ${url}`);
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
+    await this.dismissChatPopup();
     await WaitHelper.waitForNetworkIdle(this.page);
   }
 
@@ -31,6 +55,7 @@ export class BasePage {
 
   async waitForPageReady(): Promise<void> {
     await this.page.waitForLoadState('domcontentloaded');
+    await this.dismissChatPopup();
     await WaitHelper.waitForNetworkIdle(this.page);
   }
 }
