@@ -138,8 +138,9 @@ test('TC_ADD_02 - Negative - submit product with empty SKU should show validatio
   console.log('  ✅ Form not submitted — still on create page');
 
   // Validate error clears once SKU filled
+  // Wait for hidden explicitly — error toast takes variable time to dismiss
   await skuInput.fill('NEG_SKU_VALID_001');
-  await page.waitForTimeout(800);
+  await skuError.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
   expect(await skuError.isVisible().catch(() => false)).toBeFalsy();
   console.log('  ✅ Error clears once SKU is filled');
 

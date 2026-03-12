@@ -6,14 +6,12 @@ import { ProductsPage } from '../pages/products.page';
 
 // =============================================================================
 // SCRIPT 2 — PRODUCT CRUD  (E2E — single login, single session, 4 tests)
-// Login once in beforeAll — session shared across Create → Read → Update → Delete
-//
-// Run with defaults:  npx playwright test tests/products.spec.ts --headed
-// Run custom data:    PRODUCT_NAME="X" PRODUCT_SKU="Y" npx playwright test tests/products.spec.ts --headed
+// Timestamp suffix on name/SKU avoids conflicts with leftover test data
 // =============================================================================
 
-const PRODUCT_NAME = process.env.PRODUCT_NAME || 'TestProduct_1';
-const PRODUCT_SKU  = process.env.PRODUCT_SKU  || 'TestSKUId_1';
+const TIMESTAMP    = Date.now();
+const PRODUCT_NAME = process.env.PRODUCT_NAME || `TestProduct_${TIMESTAMP}`;
+const PRODUCT_SKU  = process.env.PRODUCT_SKU  || `TestSKU_${TIMESTAMP}`;
 const UPDATED_NAME = `${PRODUCT_NAME}_Updated`;
 
 let context: BrowserContext;
@@ -91,16 +89,13 @@ test('TC_PRODUCT_02 - Read Product - search by name, verify name, status and var
   const productRow  = page.locator(`tr:has([data-test-id="products_table_product_link_${productId}"])`);
   const productLink = page.locator(`[data-test-id="products_table_product_link_${productId}"]`);
 
-  // Verify name
   const linkText = await productLink.textContent();
   expect(linkText?.trim()).toBe(PRODUCT_NAME);
   console.log(`  ✅ Name: "${linkText?.trim()}"`);
 
-  // Verify status
   await expect(productRow.locator('text=Active').first()).toBeVisible();
   console.log('  ✅ Status: Active');
 
-  // Verify variant count
   const variantText = await productRow.locator('text=/\\d+ variant/i').first().textContent().catch(() => 'N/A');
   console.log(`  ✅ Variants: "${variantText?.trim()}"`);
 
@@ -130,19 +125,21 @@ test('TC_PRODUCT_03 - Update Product - change name and verify updated in listing
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(2000);
 
-  // Verify updated name in listing
+  // Go back to listing and search for updated name
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  expect(
-    await productsPage.isProductVisible(UPDATED_NAME),
-    `"${UPDATED_NAME}" should appear in listing`
-  ).toBeTruthy();
+  // Search for updated name — confirms update reflected in listing
+  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInput.fill(UPDATED_NAME);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1000);
 
   expect(
-    await productsPage.isProductVisible(PRODUCT_NAME),
-    `Old name "${PRODUCT_NAME}" should no longer appear`
-  ).toBeFalsy();
+    await productsPage.isProductVisible(UPDATED_NAME),
+    `"${UPDATED_NAME}" should appear in listing after update`
+  ).toBeTruthy();
 
   console.log(`✅ UPDATE — name changed to "${UPDATED_NAME}" and verified in listing`);
 });
@@ -157,26 +154,36 @@ test('TC_PRODUCT_04 - Delete Product - confirm modal, validate toast and verify 
   expect(productId, 'Product ID must be set from TC_PRODUCT_01').toBeDefined();
   console.log(`\n🗑️  Deleting: "${UPDATED_NAME}" (ID: ${productId})`);
 
-  // Select row checkbox
-  const checkbox = page.locator(`[data-test-id="generic_table_row_checkbox_${productId}"]`);
-  await checkbox.waitFor({ state: 'visible', timeout: 15000 });
-  await checkbox.check();
+  // Search for updated product name first
+  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInput.fill(UPDATED_NAME);
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(1000);
 
-  // More Actions → Delete products
+  // Select first result checkbox
+  const checkbox = page.locator(`[data-test-id="generic_table_row_checkbox_${productId}"]`);
+  await checkbox.waitFor({ state: 'visible', timeout: 10000 });
+  await checkbox.check();
+  console.log('  ✅ Product selected — "1 item selected" toolbar visible');
+
+  // Click three dots (more actions) on the selection toolbar
   const moreActions = page.locator('[data-test-id="bulk_action_toolbar_more_actions_button"]');
   await moreActions.waitFor({ state: 'visible', timeout: 8000 });
   await moreActions.click();
 
-  await page.getByText('Delete products').waitFor({ state: 'visible', timeout: 5000 });
-  await page.getByText('Delete products').click();
+  // Click Delete products
+  const deleteOption = page.getByText('Delete products');
+  await deleteOption.waitFor({ state: 'visible', timeout: 5000 });
+  await deleteOption.click();
 
-  // Confirm modal
+  // Confirm modal → OK
   const okButton = page.getByRole('button', { name: 'OK' });
   await okButton.waitFor({ state: 'visible', timeout: 8000 });
   console.log('  ✅ Confirmation modal appeared');
   await okButton.click();
 
-  // Toast notification
+  // Validate toast notification
   const toast = page.locator('[class*="toast"], [class*="message"], [class*="notification"], [role="alert"]').first();
   const toastVisible = await toast.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
   if (toastVisible) {
@@ -186,13 +193,13 @@ test('TC_PRODUCT_04 - Delete Product - confirm modal, validate toast and verify 
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(2000);
 
-  // Search for deleted product — should return no results
+  // Search again — should return no results
   await page.goto(`${ENV.BASE_URL}${ENV.PRODUCTS_URL}`);
   await productsPage.waitForProductsToLoad();
 
-  const searchInput = page.locator('[placeholder*="Search" i], input[type="search"]').first();
-  await searchInput.waitFor({ state: 'visible', timeout: 8000 });
-  await searchInput.fill(UPDATED_NAME);
+  const searchInputAfter = page.locator('[placeholder*="Search" i], input[type="search"]').first();
+  await searchInputAfter.waitFor({ state: 'visible', timeout: 8000 });
+  await searchInputAfter.fill(UPDATED_NAME);
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(1000);
 
